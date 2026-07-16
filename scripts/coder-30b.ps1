@@ -9,11 +9,14 @@
 #   --tensor-split 12,8   pack the FAST card (3080Ti/16x); speed scales with weight
 #                         on it (12,8 => ~112 tok/s; 8,6 => only 76). Counterintuitive
 #                         but measured on this box.
-#   -c 24576              KV cache is PRE-ALLOCATED at load, won't grow/OOM as the
-#                         session fills. 24k leaves a safe Ti margin (~500MB) AND
-#                         ~3.4GB free on the 3080 for the Kokoro/whisper voice pipeline.
+#   -c 32768              KV cache is PRE-ALLOCATED at load, won't grow/OOM as the
+#                         session fills. 32k is the model's NATIVE trained context (Qwen3-
+#                         Coder) — full context with NO YaRN rope-scaling penalty. The KV
+#                         (MoE + GQA → small) costs ~3.3GB; the freed 3080 headroom (voice
+#                         pipeline uses a separate 4B/8B, not co-resident) absorbs it.
+#                         Was 24k when the 3080 reserved ~3.4GB for the voice engine.
 #
-# Expect ~11.6GB on the 3080Ti + ~6.6GB on the 3080, ~112 tok/s (135 warm), full Q3.
+# Expect ~11.6GB on the 3080Ti + ~7GB on the 3080, ~140 tok/s warm, full Q3.
 #
 # Usage:  pwsh scripts/coder-30b.ps1          # bring it up
 #         pwsh scripts/coder-30b.ps1 -Down    # tear it down
@@ -37,9 +40,9 @@ docker run -d --name $name --gpus all `
     -p "$($port):8080" `
     -v $mount `
     $image `
-    -m $model -ngl 99 --tensor-split 12,8 -c 24576 --cont-batching --jinja `
+    -m $model -ngl 99 --tensor-split 12,8 -c 32768 --cont-batching --jinja `
     --host 0.0.0.0 --port 8080 --alias qwen3-coder-30b | Out-Null
-"launched $name on :$port (tensor-split 12,8, -c 24576)"
+"launched $name on :$port (tensor-split 12,8, -c 32768)"
 
 "`nwaiting for the server to serve (weights are 14GB — give it a minute)..."
 $ok = $false
