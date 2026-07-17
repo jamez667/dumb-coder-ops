@@ -1,7 +1,7 @@
 # The dev/verify sandbox (spec 12 — reproducible build environment).
 #
 # Generated apps + their frozen tests run INSIDE this container, never on the host:
-#   docker run --rm -v <workspace>:/workspace -w /workspace dumb-coder-devenv <cmd>
+#   docker run --rm -v <workspace>:/workspace -w /workspace smart-coder-devenv <cmd>
 # so a missing package or a host-vs-container layout mismatch can't break a build, and
 # the workspace is the only thing mounted in. `PYTHONPATH=/workspace` means a test's
 # `from app import app` resolves against the project root regardless of where the file

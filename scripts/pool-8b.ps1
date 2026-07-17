@@ -1,4 +1,4 @@
-# Launch the Qwen3-8B pools that back the dumb-coder MCP server: one llama.cpp
+# Launch the Qwen3-8B pools that back the smart-coder MCP server: one llama.cpp
 # server per GPU, each with N parallel slots (`-np N --cont-batching`). Weights
 # load once per server (~4.7GB Q4) and N concurrent requests decode via continuous
 # batching — so several MCP coding jobs run at the same time on one card, instead
@@ -8,7 +8,7 @@
 #   Pool 1 (3080,    GPU 1):  :11440  2 slots  -c 32768  (16384 tokens/slot)
 #
 # => 5 concurrent agents total. The MCP round-robins jobs across both URLs (set
-# DC_BASE_URLS to the line this script prints), so both cards are used evenly with
+# SC_BASE_URLS to the line this script prints), so both cards are used evenly with
 # no external load balancer.
 #
 # Each pool is pinned to ONE physical card via CUDA_VISIBLE_DEVICES — single-card,
@@ -31,8 +31,8 @@ $mount = "C:\Users\mail\.ai\llm:/models"
 
 # name, host-port, GPU index, slots, total context
 $pools = @(
-    @{ name = "dc-qwen8b-pool";  port = 11439; gpu = 0; slots = 3; ctx = 36864 },
-    @{ name = "dc-qwen8b-pool2"; port = 11440; gpu = 1; slots = 2; ctx = 32768 }
+    @{ name = "sc-qwen8b-pool";  port = 11439; gpu = 0; slots = 3; ctx = 36864 },
+    @{ name = "sc-qwen8b-pool2"; port = 11440; gpu = 1; slots = 2; ctx = 32768 }
 )
 
 if ($Down) {
@@ -74,4 +74,4 @@ nvidia-smi --query-gpu=index,memory.used,memory.free,memory.total --format=csv,n
 
 $urls = ($pools | ForEach-Object { "http://host.docker.internal:$($_.port)/v1" }) -join ","
 "`nPoint the MCP at both pools with:"
-"  DC_BASE_URLS=$urls"
+"  SC_BASE_URLS=$urls"

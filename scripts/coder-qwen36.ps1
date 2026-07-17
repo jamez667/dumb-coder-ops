@@ -1,5 +1,5 @@
 # Launch Qwen3.6-27B (DENSE, Q4_K_M) split across BOTH GPUs — trial backend for
-# dumb-coder, to A/B against the shipped qwen3-coder-30b.
+# smart-coder, to A/B against the shipped qwen3-coder-30b.
 #
 # NOTE vs coder-30b.ps1: this model is DENSE (27B params, all active per token), NOT
 # an MoE. Splitting a dense model DOES push activations across the slow PCIe-4x link
@@ -12,7 +12,7 @@
 # garbage/repeats, the build is too old: `docker pull ghcr.io/ggml-org/llama.cpp:server-cuda`
 # and relaunch. ALWAYS eyeball the smoke-test reply below before trusting it.
 #
-#   Container dc-qwen36 -> :11436, alias `qwen3.6-27b`  (30B stays on :11435)
+#   Container sc-qwen36 -> :11436, alias `qwen3.6-27b`  (30B stays on :11435)
 #   Q4_K_M weights ~15.7GB. TUNED CONFIG (measured on this rig):
 #     --tensor-split 10,10   BALANCED split. Dense-model tok/s is ~37 regardless of split
 #                            (it's serially link-bound either way), so optimize the split for
@@ -28,7 +28,7 @@
 #         pwsh scripts/coder-qwen36.ps1 -Down    # tear it down
 param([switch]$Down)
 
-$name  = "dc-qwen36"
+$name  = "sc-qwen36"
 $model = "/models/Qwen3.6-27B-MTP-Q4_K_M.gguf"
 $image = "ghcr.io/ggml-org/llama.cpp:server-cuda"
 $mount = "C:\Users\mail\.ai\llm:/models"

@@ -1,11 +1,11 @@
 # Launch the qwen3-coder-30b-a3b MoE split across BOTH GPUs — the daily-driver
-# backend for dumb-coder (strictly beats the 8B; clears the whole difficulty ladder).
+# backend for smart-coder (strictly beats the 8B; clears the whole difficulty ladder).
 #
 # ONE model, weights tensor-split across the pair. It's MoE (30B total / ~3B active
 # per token) so very little crosses the slow PCIe-4x link — the asymmetric 16x/4x
 # rig doesn't bottleneck, and it's actually FASTER than the single-card 8B.
 #
-#   Container dc-coder30b -> :11435, alias `qwen3-coder-30b`
+#   Container sc-coder30b -> :11435, alias `qwen3-coder-30b`
 #   --tensor-split 12,8   pack the FAST card (3080Ti/16x); speed scales with weight
 #                         on it (12,8 => ~112 tok/s; 8,6 => only 76). Counterintuitive
 #                         but measured on this box.
@@ -22,7 +22,7 @@
 #         pwsh scripts/coder-30b.ps1 -Down    # tear it down
 param([switch]$Down)
 
-$name  = "dc-coder30b"
+$name  = "sc-coder30b"
 $model = "/models/qwen3-coder-30b-a3b-instruct-q3_k_m.gguf"
 $image = "ghcr.io/ggml-org/llama.cpp:server-cuda"
 $mount = "C:\Users\mail\.ai\llm:/models"

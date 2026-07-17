@@ -1,6 +1,6 @@
 # The fixed Python toolkit the generated apps + their tests run against. Pinned so the
 # verify environment is identical every run, on any machine — the "fixed toolkit" the
-# planner/coders are constrained to (see dc-workflow STACK_CONSTRAINT). Adding a library
+# planner/coders are constrained to (see sc-workflow STACK_CONSTRAINT). Adding a library
 # here is the deliberate way to widen what generated code may import.
 Flask[async]==3.1.3
 Flask-SQLAlchemy==3.1.1
