@@ -1,0 +1,115 @@
+# llama.cpp backend launchers for smart-coder — declarative replacement for the old
+# scripts/*.ps1 launchers. All three services build the same thin wrapper image
+# (docker/llama/Dockerfile = stock llama.cpp:server-cuda + curl) so each can
+# self-report readiness via a native healthcheck that polls /v1/models.
+#
+# Nothing starts by default — every service is gated behind a PROFILE. This enforces
+# the VRAM constraint: the 30B and the 8B swarm compete for the same cards, so you
+# run ONE profile or the OTHER, never both.
+#
+#   docker compose --profile coder30b up --build --wait   # bring the 30B up, block till serving
+#   docker compose --profile coder30b down                # tear it down
+#   docker compose --profile pool8b   up --build --wait   # bring BOTH 8B pools up
+#   docker compose --profile pool8b   down                # tear both down
+#
+# `--wait` blocks until the healthcheck passes (model loaded + serving) — the READY
+# signal the old host-side poll loops printed. `--build` is a ~5s no-op once cached.
+#
+# VRAM glance (host-side — a container can't see the whole rig; run it yourself after up):
+#   nvidia-smi --query-gpu=index,memory.used,memory.free,memory.total --format=csv,noheader
+
+# Pinned so the project name doesn't ride on the on-disk directory name.
+name: smart-coder-ops
+
+# Shared bits every service reuses (YAML anchors keep this DRY):
+x-llama-common: &llama-common
+  build:
+    context: ./docker/llama
+  image: sc-llama            # the built wrapper image, shared by all services
+  volumes:
+    - "C:/Users/mail/.ai/llm:/models"
+  # Native readiness: curl (added in the wrapper image) polls the server inside the
+  # container. Healthy = /v1/models answers = model finished loading. start_period
+  # covers the multi-GB weight load so slow loads aren't marked unhealthy early.
+  healthcheck:
+    test: ["CMD", "curl", "-fsS", "http://localhost:8080/v1/models"]
+    interval: 5s
+    timeout: 3s
+    retries: 60
+    start_period: 30s
+
+services:
+  # qwen3-coder-30b-a3b MoE split across BOTH GPUs — the daily-driver backend.
+  # MoE (30B total / ~3B active) so little crosses the slow PCIe-4x link; faster than
+  # the single-card 8B despite the split.
+  #   --tensor-split 12,8  pack the FAST card (3080Ti/16x); speed scales with weight on
+  #                        it (12,8 => ~112 tok/s; 8,6 => 76). Counterintuitive, measured.
+  #   -c 32768             native trained context (NO YaRN penalty); KV pre-allocated at
+  #                        load, ~3.3GB (MoE+GQA → small). Expect ~11.6GB Ti + ~7GB 3080.
+  #   --no-mmap            all weights go to VRAM (-ngl 99), so DON'T also keep the 14GB
+  #                        GGUF memory-mapped in host RAM — mmap'd, it shows as ~14GB of
+  #                        (reclaimable) page cache that reads as "RAM full" on Windows.
+  #                        --no-mmap reads it through a transient buffer that frees after
+  #                        the transfer to GPU, leaving only the ~800MB server RSS resident.
+  sc-coder30b:
+    <<: *llama-common
+    container_name: sc-coder30b
+    profiles: ["coder30b"]
+    ports: ["11435:8080"]
+    command: >
+      -m /models/qwen3-coder-30b-a3b-instruct-q3_k_m.gguf
+      -ngl 99 --tensor-split 12,8 -c 32768 --no-mmap --cont-batching --jinja
+      --host 0.0.0.0 --port 8080 --alias qwen3-coder-30b
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all       # both cards; -ts splits weights across them
+              capabilities: [gpu]
+
+  # Qwen3-8B pool 0 — pinned to the 3080 Ti (GPU 0) via CUDA_VISIBLE_DEVICES. Single
+  # card, no tensor-split (splitting an 8B over the x4 link tanks throughput). 3 slots
+  # via -np + continuous batching. 3080 Ti is shared with the Windows desktop → the
+  # smaller-than-pool2 context (-c 36864) leaves a ~1.5GB buffer (49152 OOMs). ~10.4GB.
+  sc-qwen8b-pool:
+    <<: *llama-common
+    container_name: sc-qwen8b-pool
+    profiles: ["pool8b"]
+    ports: ["11439:8080"]
+    environment:
+      - CUDA_VISIBLE_DEVICES=0
+    command: >
+      -m /models/Qwen3-8B-Q4_K_M.gguf
+      -ngl 99 -c 36864 -np 3 --no-mmap --cont-batching --jinja
+      --host 0.0.0.0 --port 8080 --alias qwen3-8b
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all       # both exposed; CUDA_VISIBLE_DEVICES pins to GPU 0
+              capabilities: [gpu]
+
+  # Qwen3-8B pool 1 — pinned to the 3080 (GPU 1). No desktop load on this card, so push
+  # context harder: 2 slots, -c 32768 (~9.4GB). Together with pool 0 = 5 concurrent
+  # agents; the MCP round-robins across both URLs (SC_BASE_URLS), no external balancer:
+  #   SC_BASE_URLS=http://host.docker.internal:11439/v1,http://host.docker.internal:11440/v1
+  sc-qwen8b-pool2:
+    <<: *llama-common
+    container_name: sc-qwen8b-pool2
+    profiles: ["pool8b"]
+    ports: ["11440:8080"]
+    environment:
+      - CUDA_VISIBLE_DEVICES=1
+    command: >
+      -m /models/Qwen3-8B-Q4_K_M.gguf
+      -ngl 99 -c 32768 -np 2 --no-mmap --cont-batching --jinja
+      --host 0.0.0.0 --port 8080 --alias qwen3-8b
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all       # both exposed; CUDA_VISIBLE_DEVICES pins to GPU 1
+              capabilities: [gpu]

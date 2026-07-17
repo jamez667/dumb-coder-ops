@@ -10,24 +10,56 @@ image) stay in the main repo under `docker/mcp/`.
 
 ## Contents
 
-### `scripts/` — llama.cpp backend launchers (PowerShell, Windows)
+### `compose.yaml` — llama.cpp backend launchers
 
-Stock `ghcr.io/ggml-org/llama.cpp:server-cuda` containers serving GGUF models on
-this box's two GPUs. smart-coder reaches them over HTTP (OpenAI-compatible API);
-it has no knowledge of these scripts.
+Stock `ghcr.io/ggml-org/llama.cpp:server-cuda` (wrapped to add `curl` — see
+`docker/llama/`) serving GGUF models on this box's two GPUs. smart-coder reaches
+them over HTTP (OpenAI-compatible API); it has no knowledge of this file.
 
-| Script | Backend | Endpoint |
+| Service (profile) | Backend | Endpoint |
 |--------|---------|----------|
-| `coder-30b.ps1` | `qwen3-coder-30b-a3b` MoE, split across both GPUs (`--tensor-split 12,8`) — the daily driver | `:11435` |
-| `pool-8b.ps1` | Two Qwen3-8B pools (one per GPU, `-np` slots) — the parallel MCP swarm fallback | `:11439`, `:11440` |
+| `sc-coder30b` (`coder30b`) | `qwen3-coder-30b-a3b` MoE, split across both GPUs (`--tensor-split 12,8`) — the daily driver | `:11435` |
+| `sc-qwen8b-pool` / `-pool2` (`pool8b`) | Two Qwen3-8B pools (one per GPU, `-np` slots) — the parallel MCP swarm fallback | `:11439`, `:11440` |
 
-Each takes `-Down` to tear down. The 30B and the 8B swarm compete for the same
-VRAM — run one or the other.
+Nothing starts without a **profile**. The 30B and the 8B swarm compete for the
+same VRAM — run one profile or the other, never both.
 
 ```powershell
-pwsh scripts/coder-30b.ps1          # bring the 30B up
-pwsh scripts/coder-30b.ps1 -Down    # tear it down
+# 30B daily driver — --wait blocks until the model is loaded and serving
+docker compose --profile coder30b up --build --wait
+docker compose --profile coder30b down
+
+# Both 8B pools (5 concurrent agents total)
+docker compose --profile pool8b up --build --wait
+docker compose --profile pool8b down
 ```
+
+`--wait` returns when the in-container healthcheck passes (curl hits `/v1/models`),
+i.e. the moment the model finishes loading — no host-side polling. `--build` is a
+~5s no-op once the wrapper image is cached.
+
+**VRAM glance** (host-side — a container can't see the whole rig):
+
+```powershell
+nvidia-smi --query-gpu=index,memory.used,memory.free,memory.total --format=csv,noheader
+```
+
+**8B pools** round-robin behind the MCP — point it at both with:
+
+```
+SC_BASE_URLS=http://host.docker.internal:11439/v1,http://host.docker.internal:11440/v1
+```
+
+> **First-run note:** compose requests GPUs via `deploy.resources` (the documented
+> equivalent of `--gpus all`); the pools additionally pin one card via
+> `CUDA_VISIBLE_DEVICES`. Verify GPU passthrough on your Docker Desktop / WSL2 setup
+> the first time — `nvidia-smi` inside the container, or just watch the load succeed.
+
+### `docker/llama/` — the healthcheck-capable llama.cpp image
+
+Three lines: `FROM` the stock llama.cpp server image + `apt-get install curl`, so
+compose's healthcheck can poll the model from inside the container. Built
+automatically by `docker compose --build`.
 
 ### `docker/pyenv/` — the verify sandbox image
 
@@ -42,7 +74,7 @@ docker build -t smart-coder-pyenv docker/pyenv
 
 ## Relationship to smart-coder
 
-- **Backends** (`scripts/`): decoupled — HTTP only. The endpoint/model smart-coder
+- **Backends** (`compose.yaml`): decoupled — HTTP only. The endpoint/model smart-coder
   talks to lives in `%APPDATA%\smart-coder\config.json` (or `SC_BASE_URL`/`SC_MODEL`),
   not in either repo.
 - **Verify image** (`docker/pyenv/`): decoupled — referenced by name.
