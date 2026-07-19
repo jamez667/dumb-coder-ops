@@ -60,6 +60,27 @@ services:
       -m /models/qwen3-coder-30b-a3b-instruct-q3_k_m.gguf
       -ngl 99 --tensor-split 12,8 -c 32768 --no-mmap --cont-batching --jinja
       --host 0.0.0.0 --port 8080 --alias qwen3-coder-30b
+    restart: unless-stopped
+    labels:
+      - autoheal=true          # the sc-autoheal watchdog restarts this on unhealthy
+    # Probe real inference, not just /v1/models — a wedged model still answers the
+    # latter. POST /completion actually generates a token; failing that => restart.
+    healthcheck:
+      test:
+        - "CMD"
+        - "curl"
+        - "-fsS"
+        - "-X"
+        - "POST"
+        - "http://localhost:8080/completion"
+        - "-H"
+        - "Content-Type: application/json"
+        - "-d"
+        - '{"prompt":"ping","n_predict":1,"cache_prompt":true}'
+      interval: 10s
+      timeout: 8s
+      retries: 2
+      start_period: 120s
     deploy:
       resources:
         reservations:
@@ -67,6 +88,21 @@ services:
             - driver: nvidia
               count: all       # both cards; -ts splits weights across them
               capabilities: [gpu]
+
+  # Watchdog: restarts any autoheal=true container that goes unhealthy — the piece
+  # a healthcheck alone can't do. Same profile as the 30B so it's not idle on 8b.
+  # Socket is the WSL2 Linux path (Docker Desktop), NOT //./pipe/ (Windows-containers).
+  sc-autoheal:
+    image: willfarrell/autoheal:latest
+    container_name: sc-autoheal
+    profiles: ["coder30b"]
+    restart: unless-stopped
+    environment:
+      - AUTOHEAL_CONTAINER_LABEL=autoheal   # only watch containers we opt in
+      - AUTOHEAL_INTERVAL=5                  # check health state every 5s
+      - AUTOHEAL_START_PERIOD=120           # match the 30B's load grace period
+    volumes:
+      - "/var/run/docker.sock:/var/run/docker.sock"
 
   # Qwen3-8B pool 0 — pinned to the 3080 Ti (GPU 0) via CUDA_VISIBLE_DEVICES. Single
   # card, no tensor-split (splitting an 8B over the x4 link tanks throughput). 3 slots
